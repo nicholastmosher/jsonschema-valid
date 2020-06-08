@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::context::Context;
-use crate::error::ValidationError;
+use crate::error::{ValidationError, ValidationErrorKind};
 use crate::schemas::{self, Draft};
 // TODO: Make the choice of resolver dynamic
 
@@ -129,7 +129,7 @@ impl<'a> Resolver<'a> {
                 _ => match self.id_mapping.get(url_str) {
                     Some(value) => Ok(value),
                     None => Err(ValidationError::new(
-                        &format!("Can't resolve url {}", url_str),
+                        ValidationErrorKind::FailedResolveUrl(url_str.to_owned()),
                         None,
                         None,
                     )),
@@ -174,7 +174,7 @@ impl<'a> Resolver<'a> {
         match document.pointer(&fragment) {
             Some(x) => Ok((resource, x)),
             None => Err(ValidationError::new(
-                &format!("Couldn't resolve JSON pointer {}", url),
+                ValidationErrorKind::FailedPointer(url),
                 None,
                 None,
             )),

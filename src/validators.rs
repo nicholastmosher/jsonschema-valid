@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value, Value::Array, Value::Bool, Value::Object};
 
 use crate::config::Config;
 use crate::context::Context;
-use crate::error::{make_error, no_error, ErrorIterator, ValidationError};
+use crate::error::{make_error, no_error, ErrorIterator, ValidationError, ValidationErrorKind};
 use crate::unique;
 use crate::util;
 
@@ -55,7 +55,7 @@ pub fn descend<'a>(
             if *b {
                 no_error()
             } else {
-                make_error("false schema always fails", Some(instance), Some(schema))
+                make_error(ValidationErrorKind::FalseSchema, Some(instance), Some(schema))
             }
         }
         Object(schema_object) => {
@@ -81,7 +81,7 @@ pub fn descend<'a>(
             }
         }
         _ => make_error(
-            "Invalid schema. Must be boolean or object.",
+            ValidationErrorKind::InvalidSchema,
             None,
             Some(schema),
         ),
@@ -223,7 +223,7 @@ pub fn additionalProperties<'a>(
             .and_then(|x| x.as_object())
             .map(|x| find_additional_properties(instance_map, x));
 
-        if let Some(mut extras) = extras {
+        if let Some(extras) = extras {
             match schema {
                 Object(_) => {
                     return Box::new(extras.flat_map(move |extra| {
@@ -241,13 +241,12 @@ pub fn additionalProperties<'a>(
                 }
                 Bool(bool) => {
                     if !bool {
-                        let extra_string = util::format_list(&mut extras);
-                        if !extra_string.is_empty() {
+                        let extra_strings: Vec<String> = extras
+                            .map(ToOwned::to_owned)
+                            .collect();
+                        if !extra_strings.is_empty() {
                             return make_error(
-                                format!(
-                                    "Additional properties are not allowed. Found {}.",
-                                    extra_string
-                                ),
+                                ValidationErrorKind::AdditionalPropertiesNotAllowed(extra_strings),
                                 Some(instance),
                                 parent_schema,
                             );
@@ -325,7 +324,7 @@ pub fn additionalItems<'a>(
                 Bool(b) => {
                     if !b && instance_array.len() > items.len() {
                         return make_error(
-                            "Additional items are not allowed.",
+                            ValidationErrorKind::AdditionalItemsNotAllowed,
                             Some(instance),
                             Some(parent_schema),
                         );
@@ -346,7 +345,7 @@ pub fn const_<'a>(
     _ref_context: Context<'a>,
 ) -> ErrorIterator<'a> {
     if !util::json_equal(instance, schema) {
-        make_error("const doesn't match.", Some(instance), Some(schema))
+        make_error(ValidationErrorKind::MismatchedConst, Some(instance), Some(schema))
     } else {
         no_error()
     }
@@ -369,7 +368,7 @@ pub fn contains<'a>(
             }
         }
         return make_error(
-            "No items in array valid under the given schema.",
+            ValidationErrorKind::DoesNotContain,
             Some(instance),
             Some(schema),
         );
@@ -387,7 +386,7 @@ pub fn exclusiveMinimum<'a>(
     if let (Value::Number(instance_number), Value::Number(schema_number)) = (instance, schema) {
         if instance_number.as_f64() <= schema_number.as_f64() {
             return make_error(
-                format!("{} <= exclusiveMinimum {}", instance_number, schema_number),
+                ValidationErrorKind::ExclusiveMinimum(instance_number.clone(), schema_number.clone()),
                 Some(instance),
                 Some(schema),
             );
@@ -406,7 +405,7 @@ pub fn exclusiveMaximum<'a>(
     if let (Value::Number(instance_number), Value::Number(schema_number)) = (instance, schema) {
         if instance_number.as_f64() >= schema_number.as_f64() {
             return make_error(
-                format!("{} >= exclusiveMaximum {}", instance_number, schema_number),
+                ValidationErrorKind::ExclusiveMaximum(instance_number.clone(), schema_number.clone()),
                 Some(instance),
                 Some(schema),
             );
@@ -430,14 +429,14 @@ pub fn minimum_draft4<'a>(
         {
             if instance_number.as_f64() <= minimum.as_f64() {
                 return make_error(
-                    format!("{} <= exclusiveMinimum {}", instance_number, minimum),
+                    ValidationErrorKind::ExclusiveMinimum(instance_number.clone(), minimum.clone()),
                     Some(instance),
                     Some(schema),
                 );
             }
         } else if instance_number.as_f64() < minimum.as_f64() {
             return make_error(
-                format!("{} <= minimum {}", instance_number, minimum),
+                ValidationErrorKind::Minimum(instance_number.clone(), minimum.clone()),
                 Some(instance),
                 Some(schema),
             );
@@ -456,7 +455,7 @@ pub fn minimum<'a>(
     if let (Value::Number(instance_number), Value::Number(schema_number)) = (instance, schema) {
         if instance.as_f64() < schema_number.as_f64() {
             return make_error(
-                format!("{} < minimum {}", instance_number, schema_number),
+                ValidationErrorKind::Minimum(instance_number.clone(), schema_number.clone()),
                 Some(instance),
                 Some(schema),
             );
@@ -480,14 +479,14 @@ pub fn maximum_draft4<'a>(
         {
             if instance_number.as_f64() >= maximum.as_f64() {
                 return make_error(
-                    format!("{} >= exclusiveMaximum {}", instance_number, maximum),
+                    ValidationErrorKind::ExclusiveMaximum(instance_number.clone(), maximum.clone()),
                     Some(instance),
                     Some(schema),
                 );
             }
         } else if instance_number.as_f64() > maximum.as_f64() {
             return make_error(
-                format!("{} > maximum {}", instance_number, maximum),
+                ValidationErrorKind::Maximum(instance_number.clone(), maximum.clone()),
                 Some(instance),
                 Some(schema),
             );
@@ -506,7 +505,7 @@ pub fn maximum<'a>(
     if let (Value::Number(instance_number), Value::Number(maximum)) = (instance, schema) {
         if instance_number.as_f64() > maximum.as_f64() {
             return make_error(
-                format!("{} > maximum {}", instance_number, maximum),
+                ValidationErrorKind::Maximum(instance_number.clone(), maximum.clone()),
                 Some(instance),
                 Some(schema),
             );
@@ -534,7 +533,7 @@ pub fn multipleOf<'a>(
         };
         if failed {
             return make_error(
-                format!("{} not multipleOf {}", instance_number, schema_number),
+                ValidationErrorKind::NotMultipleOf(instance_number.clone(), schema_number.clone()),
                 Some(instance),
                 Some(schema),
             );
@@ -553,7 +552,7 @@ pub fn minItems<'a>(
     if let (Array(instance_array), Value::Number(schema_number)) = (instance, schema) {
         if instance_array.len() < schema_number.as_u64().unwrap() as usize {
             return make_error(
-                format!("{} < minItems {}", instance_array.len(), schema_number),
+                ValidationErrorKind::MinItems(instance_array.len(), schema_number.clone()),
                 Some(instance),
                 Some(schema),
             );
@@ -572,7 +571,7 @@ pub fn maxItems<'a>(
     if let (Array(instance_array), Value::Number(schema_number)) = (instance, schema) {
         if instance_array.len() > schema_number.as_u64().unwrap() as usize {
             return make_error(
-                format!("{} > maxItems {}", instance_array.len(), schema_number),
+                ValidationErrorKind::MaxItems(instance_array.len(), schema_number.clone()),
                 Some(instance),
                 Some(schema),
             );
@@ -590,7 +589,7 @@ pub fn uniqueItems<'a>(
 ) -> ErrorIterator<'a> {
     if let (Array(instance_array), Bool(schema)) = (instance, schema) {
         if *schema && !unique::has_unique_elements(&mut instance_array.iter()) {
-            return make_error("Items are not unique", Some(instance), None);
+            return make_error(ValidationErrorKind::NotUnique, Some(instance), None);
         }
     }
     no_error()
@@ -606,10 +605,10 @@ pub fn pattern<'a>(
     if let (Value::String(instance_string), Value::String(schema_string)) = (instance, schema) {
         if let Ok(re) = regex::Regex::new(schema_string) {
             if !re.is_match(instance_string) {
-                return make_error("Does not match pattern.", Some(instance), Some(schema));
+                return make_error(ValidationErrorKind::FailsPattern, Some(instance), Some(schema));
             }
         } else {
-            return make_error("Invalid regex.", None, Some(schema));
+            return make_error(ValidationErrorKind::InvalidPattern, None, Some(schema));
         }
     }
     no_error()
@@ -625,7 +624,7 @@ pub fn format<'a>(
     if let (Value::String(instance_string), Value::String(schema_string)) = (instance, schema) {
         if let Some(checker) = cfg.get_format_checker(schema_string) {
             if !checker(cfg, instance_string) {
-                return make_error("Invalid for format.", Some(instance), Some(schema));
+                return make_error(ValidationErrorKind::InvalidForFormat, Some(instance), Some(schema));
             }
         }
     }
@@ -643,7 +642,7 @@ pub fn minLength<'a>(
         let count = instance_string.chars().count();
         if count < schema_number.as_u64().unwrap() as usize {
             return make_error(
-                format!("{} < minLength {}", count, schema_number),
+                ValidationErrorKind::MinLength(count, schema_number.clone()),
                 Some(instance),
                 Some(schema),
             );
@@ -663,7 +662,7 @@ pub fn maxLength<'a>(
         let count = instance_string.chars().count();
         if count > schema_number.as_u64().unwrap() as usize {
             return make_error(
-                format!("{} < maxLength {}", count, schema_number),
+                ValidationErrorKind::MaxLength(count, schema_number.clone()),
                 Some(instance),
                 Some(schema),
             );
@@ -698,7 +697,7 @@ pub fn dependencies<'a>(
                             if let Value::String(key) = dep0 {
                                 if !instance_object.contains_key(key) {
                                     return make_error(
-                                        "Invalid dependencies",
+                                        ValidationErrorKind::InvalidDependencies,
                                         Some(instance),
                                         Some(schema),
                                     );
@@ -723,7 +722,7 @@ pub fn enum_<'a>(
 ) -> ErrorIterator<'a> {
     if let Array(enums) = schema {
         if !enums.iter().any(|val| util::json_equal(val, instance)) {
-            return make_error("Value is not in enum.", Some(instance), Some(schema));
+            return make_error(ValidationErrorKind::NotEnum, Some(instance), Some(schema));
         }
     }
     no_error()
@@ -799,7 +798,7 @@ pub fn type_<'a>(
     _ref_context: Context<'a>,
 ) -> ErrorIterator<'a> {
     if !util::iter_or_once(schema).any(|x| single_type(instance, x)) {
-        return make_error("Invalid type.", Some(instance), parent_schema);
+        return make_error(ValidationErrorKind::InvalidType, Some(instance), parent_schema);
     }
     no_error()
 }
@@ -835,18 +834,16 @@ pub fn required<'a>(
     _ref_context: Context<'a>,
 ) -> ErrorIterator<'a> {
     if let (Object(instance_object), Array(schema_array)) = (instance, schema) {
-        let missing_properties: Vec<&str> = schema_array
+        let missing_properties: Vec<String> = schema_array
             .iter()
             .filter_map(Value::as_str)
             .filter(|&x| !instance_object.contains_key(&x.to_string()))
+            .map(|s| s.to_owned())
             .collect();
 
         if !missing_properties.is_empty() {
             return make_error(
-                format!(
-                    "Required properties {} are missing",
-                    util::format_list(&mut missing_properties.iter().copied())
-                ),
+                ValidationErrorKind::MissingRequiredProperties(missing_properties),
                 Some(instance),
                 Some(schema),
             );
@@ -865,11 +862,7 @@ pub fn minProperties<'a>(
     if let (Object(instance_object), Value::Number(schema_number)) = (instance, schema) {
         if instance_object.len() < schema_number.as_u64().unwrap() as usize {
             return make_error(
-                format!(
-                    "{} < minProperties {}",
-                    instance_object.len(),
-                    schema_number
-                ),
+                ValidationErrorKind::MinProperties(instance_object.len(), schema_number.clone()),
                 Some(instance),
                 Some(schema),
             );
@@ -888,11 +881,7 @@ pub fn maxProperties<'a>(
     if let (Object(instance_object), Value::Number(schema_number)) = (instance, schema) {
         if instance_object.len() > schema_number.as_u64().unwrap() as usize {
             return make_error(
-                format!(
-                    "{} > maxProperties {}",
-                    instance_object.len(),
-                    schema_number
-                ),
+                ValidationErrorKind::MaxProperties(instance_object.len(), schema_number.clone()),
                 Some(instance),
                 Some(schema),
             );
@@ -951,7 +940,7 @@ pub fn anyOf<'a>(
                 return no_error();
             }
         }
-        return make_error("anyOf failed", Some(instance), Some(schema));
+        return make_error(ValidationErrorKind::FailedAnyOf, Some(instance), Some(schema));
     }
     no_error()
 }
@@ -982,7 +971,7 @@ pub fn oneOf<'a>(
         }
 
         if !found_one {
-            return make_error("nothing matched in oneOf", Some(instance), Some(schema));
+            return make_error(ValidationErrorKind::NoneMatchedOneOf, Some(instance), Some(schema));
         }
 
         let mut found_more = false;
@@ -1003,7 +992,7 @@ pub fn oneOf<'a>(
 
         if found_more {
             return make_error(
-                "More than one matched in oneOf",
+                ValidationErrorKind::MoreThanOneOf,
                 Some(instance),
                 Some(schema),
             );
@@ -1023,7 +1012,7 @@ pub fn not<'a>(
         .next()
         .is_none()
     {
-        make_error("not", Some(instance), Some(schema))
+        make_error(ValidationErrorKind::FailedInversion, Some(instance), Some(schema))
     } else {
         no_error()
     }
@@ -1075,7 +1064,7 @@ pub fn ref_<'a>(
             }
             Err(_err) => {
                 return make_error(
-                    format!("Couldn't resolve reference {}", sref),
+                    ValidationErrorKind::FailedReference(sref.clone()),
                     Some(instance),
                     None,
                 )

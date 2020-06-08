@@ -31,7 +31,7 @@ use serde_json::Value;
 
 mod config;
 mod context;
-mod error;
+pub mod error;
 mod format;
 mod resolver;
 pub mod schemas;

@@ -1,6 +1,5 @@
 use std::iter;
 
-use itertools::Itertools;
 use lazy_static::lazy_static;
 use serde_json::{json, Map, Value, Value::Number};
 
@@ -27,10 +26,6 @@ pub fn iter_or_once<'a>(instance: &'a Value) -> Box<dyn Iterator<Item = &'a Valu
         Value::Array(array) => Box::new(array.iter()),
         _ => Box::new(iter::once(instance)),
     }
-}
-
-pub fn format_list<'a, T: Iterator<Item = &'a str>>(iter: &mut T) -> String {
-    iter.map(|x| format!("\"{}\"", x)).join(", ")
 }
 
 /// Check two JSON values for equality in the way that JSON Schema defines it
